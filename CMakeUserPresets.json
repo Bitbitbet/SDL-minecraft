@@ -1,0 +1,24 @@
+{
+    "version": 5,
+    "configurePresets": [
+        {
+            "name": "release",
+            "displayName": "Ninja Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "SDL_X11": false,
+                "SDL_X11_SHARED": false
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "release",
+            "displayName": "Ninja Release Build",
+            "configurePreset": "release",
+            "jobs": 24
+        }
+    ]
+}
