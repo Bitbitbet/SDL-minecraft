@@ -1267,11 +1267,22 @@ void Wayland_SeatWarpMouse(SDL_WaylandSeat *seat, SDL_WindowData *window, float 
     SDL_VideoDevice *vd = SDL_GetVideoDevice();
     SDL_VideoData *d = vd->internal;
 
+    /* Warp positions are surface coordinates, which are pixels when the
+     * xx_fractional_scale_v2 protocol is in use, while these compositors
+     * interpret the warp position in logical coordinates. Convert the SDL window
+     * position to surface pixels first, then to the compositor's logical space.
+     */
+    const double warp_scale = window->client_scale > 0.0 ? window->client_scale : 1.0;
+    const double warp_x = x / (window->pointer_scale.x * warp_scale);
+    const double warp_y = y / (window->pointer_scale.y * warp_scale);
+    const double max_x = window->current.logical_width / warp_scale;
+    const double max_y = window->current.logical_height / warp_scale;
+
     if (seat->pointer.wl_pointer) {
         if (d->wp_pointer_warp_v1) {
             // It's a protocol error to warp the pointer outside of the surface, so clamp the position.
-            const wl_fixed_t f_x = wl_fixed_from_double(SDL_clamp(x / window->pointer_scale.x, 0, window->current.logical_width));
-            const wl_fixed_t f_y = wl_fixed_from_double(SDL_clamp(y / window->pointer_scale.y, 0, window->current.logical_height));
+            const wl_fixed_t f_x = wl_fixed_from_double(SDL_clamp(warp_x, 0, max_x));
+            const wl_fixed_t f_y = wl_fixed_from_double(SDL_clamp(warp_y, 0, max_y));
             wp_pointer_warp_v1_warp_pointer(d->wp_pointer_warp_v1, window->surface, seat->pointer.wl_pointer, f_x, f_y, seat->pointer.enter_serial);
         } else {
             bool update_grabs = false;
@@ -1298,8 +1309,8 @@ void Wayland_SeatWarpMouse(SDL_WaylandSeat *seat, SDL_WindowData *window, float 
                                                         seat->pointer.wl_pointer, NULL,
                                                         ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_ONESHOT);
 
-            const wl_fixed_t f_x = wl_fixed_from_double(x / window->pointer_scale.x);
-            const wl_fixed_t f_y = wl_fixed_from_double(y / window->pointer_scale.y);
+            const wl_fixed_t f_x = wl_fixed_from_double(warp_x);
+            const wl_fixed_t f_y = wl_fixed_from_double(warp_y);
             zwp_locked_pointer_v1_set_cursor_position_hint(warp_lock, f_x, f_y);
             wl_surface_commit(window->surface);
 

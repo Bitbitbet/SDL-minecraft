@@ -48,6 +48,7 @@
 #include "frog-color-management-v1-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "color-management-v1-client-protocol.h"
+#include "xx-fractional-scale-v2-client-protocol.h"
 
 #ifdef HAVE_LIBDECOR_H
 #include <libdecor.h>
@@ -55,6 +56,13 @@
 
 static double GetWindowScale(SDL_Window *window)
 {
+    /* When the xx_fractional_scale_v2 protocol is in use, the client coordinate
+     * space is pixels, so points and pixels are the same thing to SDL.
+     */
+    if (window->internal->client_scale > 0.0) {
+        return 1.0;
+    }
+
     return (window->flags & SDL_WINDOW_HIGH_PIXEL_DENSITY) || window->internal->scale_to_display ? window->internal->scale_factor : 1.0;
 }
 
@@ -128,6 +136,10 @@ static void GetBufferSize(SDL_Window *window, int *width, int *height)
     if (data->is_fullscreen && window->fullscreen_exclusive) {
         buf_width = window->current_fullscreen_mode.w;
         buf_height = window->current_fullscreen_mode.h;
+    } else if (data->client_scale > 0.0) {
+        // In the xx_fractional_scale_v2 client coordinate space the requested size is in pixels.
+        buf_width = data->requested.logical_width;
+        buf_height = data->requested.logical_height;
     } else if (!data->scale_to_display) {
         // Round fractional backbuffer sizes halfway away from zero.
         buf_width = PointToPixel(window, data->requested.logical_width);
@@ -362,6 +374,15 @@ static void ConfigureWindowGeometry(SDL_Window *window)
             break;
         }
 
+        /* With the xx_fractional_scale_v2 protocol the viewport destination is in
+         * client coordinates, which are pixels, so the destination must be exactly
+         * the backbuffer size, otherwise the compositor has to rescale the frame.
+         */
+        if (data->client_scale > 0.0) {
+            output_width = data->current.pixel_width;
+            output_height = data->current.pixel_height;
+        }
+
         window_size_changed = window_width != window->w || window_height != window->h ||
             data->current.logical_width != output_width || data->current.logical_height != output_height;
 
@@ -391,7 +412,12 @@ static void ConfigureWindowGeometry(SDL_Window *window)
 
         if (window_size_changed || buffer_size_changed) {
             if (data->viewport) {
-                wp_viewport_set_destination(data->viewport, window_width, window_height);
+                if (data->client_scale > 0.0) {
+                    // The viewport destination is in the client (pixel) coordinate space.
+                    wp_viewport_set_destination(data->viewport, data->current.pixel_width, data->current.pixel_height);
+                } else {
+                    wp_viewport_set_destination(data->viewport, window_width, window_height);
+                }
             } else if (window->flags & SDL_WINDOW_HIGH_PIXEL_DENSITY) {
                 // Don't change this if the DPI awareness flag is unset, as an application may have set this manually on a custom or external surface.
                 wl_surface_set_buffer_scale(data->surface, (int32_t)scale_factor);
@@ -409,6 +435,16 @@ static void ConfigureWindowGeometry(SDL_Window *window)
                 data->pointer_scale.y = scale_factor;
             }
         }
+    }
+
+    if (data->client_scale > 0.0) {
+        /* With xx_fractional_scale_v2 surface coordinates are pixels, so the SDL
+         * "logical" size is the pixel size and pointer coordinates map 1:1.
+         */
+        data->current.logical_width = data->current.pixel_width;
+        data->current.logical_height = data->current.pixel_height;
+        data->pointer_scale.x = 1.0;
+        data->pointer_scale.y = 1.0;
     }
 
     /*
@@ -1579,7 +1615,7 @@ static void Wayland_MaybeUpdateScaleFactor(SDL_WindowData *window)
      * what scale it wants via these events, so don't try to determine the scale factor
      * from which displays the surface has entered.
      */
-    if (window->fractional_scale || wl_surface_get_version(window->surface) >= WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION) {
+    if (window->fractional_scale || window->fractional_scale_v2 || wl_surface_get_version(window->surface) >= WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION) {
         return;
     }
 
@@ -1667,7 +1703,7 @@ static void handle_surface_preferred_buffer_scale(void *data, struct wl_surface 
      * so, for now, assume that the fractional scaling protocol takes priority and
      * only listen to this event if the fractional scaling protocol is not present.
      */
-    if (!wind->fractional_scale) {
+    if (!wind->fractional_scale && !wind->fractional_scale_v2) {
         Wayland_HandlePreferredScaleChanged(data, (double)factor);
     }
 }
@@ -1692,6 +1728,39 @@ static void handle_fractional_scale_preferred(void *data, struct wp_fractional_s
 
 static const struct wp_fractional_scale_v1_listener fractional_scale_listener = {
     handle_fractional_scale_preferred
+};
+
+static void handle_fractional_scale_v2(void *data, struct xx_fractional_scale_v2 *xx_fractional_scale_v2, uint32_t scale)
+{
+    SDL_WindowData *wind = (SDL_WindowData *)data;
+    const double factor = (double)scale / 16777216.0; // The scale is in 8.24 fixed point format.
+
+    if (scale == 0) {
+        return;
+    }
+
+    /* Declare that SDL uses the same coordinate space as the compositor asked for,
+     * i.e. that surface coordinates are pixels. The compositor then derives the
+     * logical size by exact division instead of rounding it up, which keeps the
+     * frame 1:1 even at fractional scale factors.
+     */
+    xx_fractional_scale_v2_set_scale_factor(xx_fractional_scale_v2, scale);
+    wind->client_scale = factor;
+
+    if (wind->viewport) {
+        wp_viewport_set_destination(wind->viewport, wind->current.pixel_width, wind->current.pixel_height);
+    }
+
+    Wayland_HandlePreferredScaleChanged(wind, factor);
+
+    // The coordinate space changed, so refresh all derived geometry.
+    wind->current.logical_width = 0;
+    wind->current.logical_height = 0;
+    ConfigureWindowGeometry(wind->sdlwindow);
+}
+
+static const struct xx_fractional_scale_v2_listener fractional_scale_v2_listener = {
+    handle_fractional_scale_v2
 };
 
 static void frog_preferred_metadata_handler(void *data, struct frog_color_managed_surface *frog_color_managed_surface, uint32_t transfer_function,
@@ -2791,7 +2860,10 @@ bool Wayland_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Proper
                                    wl_fixed_from_int(-1), wl_fixed_from_int(-1),
                                    wl_fixed_from_int(-1), wl_fixed_from_int(-1));
         }
-        if (c->fractional_scale_manager) {
+        if (c->fractional_scale_manager_v2) {
+            data->fractional_scale_v2 = xx_fractional_scale_manager_v2_get_fractional_scale(c->fractional_scale_manager_v2, data->surface);
+            xx_fractional_scale_v2_add_listener(data->fractional_scale_v2, &fractional_scale_v2_listener, data);
+        } else if (c->fractional_scale_manager) {
             data->fractional_scale = wp_fractional_scale_manager_v1_get_fractional_scale(c->fractional_scale_manager, data->surface);
             wp_fractional_scale_v1_add_listener(data->fractional_scale, &fractional_scale_listener, data);
         }
@@ -3350,6 +3422,10 @@ void Wayland_DestroyWindow(SDL_VideoDevice *_this, SDL_Window *window)
 
         if (wind->fractional_scale) {
             wp_fractional_scale_v1_destroy(wind->fractional_scale);
+        }
+
+        if (wind->fractional_scale_v2) {
+            xx_fractional_scale_v2_destroy(wind->fractional_scale_v2);
         }
 
         if (wind->wp_alpha_modifier_surface_v1) {

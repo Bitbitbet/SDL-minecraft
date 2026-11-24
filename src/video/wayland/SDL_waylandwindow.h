@@ -112,6 +112,7 @@ struct SDL_WindowData
     struct xdg_activation_token_v1 *activation_token;
     struct wp_viewport *viewport;
     struct wp_fractional_scale_v1 *fractional_scale;
+    struct xx_fractional_scale_v2 *fractional_scale_v2;
     struct zxdg_exported_v2 *exported;
     struct xdg_dialog_v1 *xdg_dialog_v1;
     struct wp_alpha_modifier_surface_v1 *wp_alpha_modifier_surface_v1;
@@ -128,6 +129,13 @@ struct SDL_WindowData
 
     char *app_id;
     double scale_factor;
+
+    /* The scale factor declared to the compositor with the
+     * xx_fractional_scale_v2 protocol, or zero if the surface doesn't use the
+     * pixels coordinate space. When non-zero, all compositor-facing surface
+     * coordinates are pixels, and the SDL window is reported in pixels too.
+     */
+    double client_scale;
 
     struct wl_buffer **icon_buffers;
     int icon_buffer_count;

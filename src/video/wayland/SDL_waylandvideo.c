@@ -68,6 +68,7 @@
 #include "xdg-shell-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include "color-management-v1-client-protocol.h"
+#include "xx-fractional-scale-v2-client-protocol.h"
 #include "pointer-warp-v1-client-protocol.h"
 #include "pointer-gestures-unstable-v1-client-protocol.h"
 
@@ -1335,6 +1336,8 @@ static void handle_registry_global(void *data, struct wl_registry *registry, uin
         d->viewporter = wl_registry_bind(d->registry, id, &wp_viewporter_interface, 1);
     } else if (SDL_strcmp(interface, "wp_fractional_scale_manager_v1") == 0) {
         d->fractional_scale_manager = wl_registry_bind(d->registry, id, &wp_fractional_scale_manager_v1_interface, 1);
+    } else if (SDL_strcmp(interface, "xx_fractional_scale_manager_v2") == 0) {
+        d->fractional_scale_manager_v2 = wl_registry_bind(d->registry, id, &xx_fractional_scale_manager_v2_interface, 1);
     } else if (SDL_strcmp(interface, "zwp_input_timestamps_manager_v1") == 0) {
         d->input_timestamps_manager = wl_registry_bind(d->registry, id, &zwp_input_timestamps_manager_v1_interface, 1);
         Wayland_DisplayInitInputTimestampManager(d);
@@ -1650,6 +1653,11 @@ static void Wayland_VideoCleanup(SDL_VideoDevice *_this)
     if (data->fractional_scale_manager) {
         wp_fractional_scale_manager_v1_destroy(data->fractional_scale_manager);
         data->fractional_scale_manager = NULL;
+    }
+
+    if (data->fractional_scale_manager_v2) {
+        xx_fractional_scale_manager_v2_destroy(data->fractional_scale_manager_v2);
+        data->fractional_scale_manager_v2 = NULL;
     }
 
     if (data->input_timestamps_manager) {

@@ -75,6 +75,7 @@ struct SDL_VideoData
     struct zxdg_output_manager_v1 *xdg_output_manager;
     struct wp_viewporter *viewporter;
     struct wp_fractional_scale_manager_v1 *fractional_scale_manager;
+    struct xx_fractional_scale_manager_v2 *fractional_scale_manager_v2;
     struct zwp_input_timestamps_manager_v1 *input_timestamps_manager;
     struct zxdg_exporter_v2 *zxdg_exporter_v2;
     struct xdg_wm_dialog_v1 *xdg_wm_dialog_v1;
