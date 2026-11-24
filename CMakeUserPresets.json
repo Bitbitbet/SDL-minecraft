@@ -9,7 +9,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "SDL_X11": false,
-                "SDL_X11_SHARED": false
+                "SDL_TESTS": false
             }
         }
     ],
